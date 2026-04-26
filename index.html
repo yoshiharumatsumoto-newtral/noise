@@ -103,7 +103,7 @@ function getAC() {
   if (!sharedAC) {
     sharedAC = new (window.AudioContext || window.webkitAudioContext)();
     masterGain = sharedAC.createGain();
-    masterGain.gain.value = 0.22;
+    masterGain.gain.value = 0.35;
 
     // ── Shared delay (炭酸感) ──
     delayNode = sharedAC.createDelay(1.0);
