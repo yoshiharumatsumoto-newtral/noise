@@ -110,10 +110,10 @@ function getAC() {
     delayNode.delayTime.value = 0.12; // 120ms
 
     delayFeedback = sharedAC.createGain();
-    delayFeedback.gain.value = 0.28; // フィードバック量
+    delayFeedback.gain.value = 0.40; // フィードバック量
 
     delayWet = sharedAC.createGain();
-    delayWet.gain.value = 0.38; // ウェット量
+    delayWet.gain.value = 0.50; // ウェット量
 
     // delay loop: delay → feedback → delay
     delayNode.connect(delayFeedback);
