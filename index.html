@@ -52,6 +52,9 @@ let audioCtx = null;
 let started = false;
 let fingers = [];
 
+// スワイプで通過したラインのインデックスを追跡
+let lastTriggeredLineIdx = -1;
+
 const CHIME_NOTES = [
   523.25, 659.25, 783.99, 1046.50, 1318.51,
   1567.98, 1760.00, 2093.00, 2637.02, 3136.00,
@@ -66,7 +69,7 @@ function initLines() {
     for (let j = 0; j <= SEGMENTS; j++) {
       nodes.push({ x, y: (H / SEGMENTS) * j, ox: x, vx: 0 });
     }
-    lines.push({ nodes, baseX: x, lastTriggered: 0 });
+    lines.push({ nodes, baseX: x });
   }
 }
 initLines();
@@ -74,66 +77,51 @@ initLines();
 function playChime(lineIndex, yRatio) {
   if (!audioCtx) return;
   const now = audioCtx.currentTime;
-  const line = lines[lineIndex];
-  if (now - line.lastTriggered < 0.08) return;
-  line.lastTriggered = now;
 
   const ratio = lineIndex / (LINE_COUNT - 1);
   const noteIdx = Math.floor(ratio * (CHIME_NOTES.length - 1));
   const freq = CHIME_NOTES[noteIdx];
-  const decay = 1.8 + (1 - ratio) * 1.5;
+  const decay = 1.5 + (1 - ratio) * 1.2;
 
-  // 縦：フィルター
   const cutoff = 8000 - yRatio * 6000;
-  const Q = 2.0 + yRatio * 4.0;
+  const Q = 2.0 + yRatio * 3.0;
 
   const osc1 = audioCtx.createOscillator();
   const osc2 = audioCtx.createOscillator();
-  const osc3 = audioCtx.createOscillator();
   osc1.type = 'sine'; osc1.frequency.value = freq;
   osc2.type = 'sine'; osc2.frequency.value = freq * 2.756;
-  osc3.type = 'sine'; osc3.frequency.value = freq * 5.404;
 
-  const mix = audioCtx.createGain(); mix.gain.value = 1.0;
-  const g2 = audioCtx.createGain(); g2.gain.value = 0.4;
-  const g3 = audioCtx.createGain(); g3.gain.value = 0.18;
-
-  const hp = audioCtx.createBiquadFilter();
-  hp.type = 'highpass'; hp.frequency.value = 800; hp.Q.value = 0.5;
+  const g1 = audioCtx.createGain(); g1.gain.value = 1.0;
+  const g2 = audioCtx.createGain(); g2.gain.value = 0.35;
 
   const bp = audioCtx.createBiquadFilter();
   bp.type = 'bandpass'; bp.frequency.value = cutoff; bp.Q.value = Q;
 
   const env = audioCtx.createGain();
-  env.gain.setValueAtTime(0.3, now);
+  env.gain.setValueAtTime(0.25, now);
   env.gain.exponentialRampToValueAtTime(0.001, now + decay);
 
-  const delay = audioCtx.createDelay(0.5);
-  delay.delayTime.value = 0.055;
-  const dGain = audioCtx.createGain(); dGain.gain.value = 0.15;
-
-  osc1.connect(mix); osc2.connect(g2); g2.connect(mix); osc3.connect(g3); g3.connect(mix);
-  mix.connect(hp); hp.connect(bp); bp.connect(env);
+  osc1.connect(g1); g1.connect(bp);
+  osc2.connect(g2); g2.connect(bp);
+  bp.connect(env);
   env.connect(audioCtx.destination);
-  env.connect(delay); delay.connect(dGain); dGain.connect(audioCtx.destination);
 
-  osc1.start(now); osc1.stop(now + decay + 0.2);
-  osc2.start(now); osc2.stop(now + decay * 0.6 + 0.1);
-  osc3.start(now); osc3.stop(now + decay * 0.3 + 0.1);
+  osc1.start(now); osc1.stop(now + decay + 0.1);
+  osc2.start(now); osc2.stop(now + decay * 0.5 + 0.1);
 }
 
-// タッチ位置から最寄りのラインを探してチャイムを鳴らす
-function triggerNearestChimes(px, py) {
+// スワイプで通過したラインだけを1本ずつ鳴らす
+function checkLinesCrossed(px, py) {
   const yRatio = py / H;
-  for (let li = 0; li < lines.length; li++) {
-    const lineX = lines[li].baseX;
-    const dist = Math.abs(lineX - px);
-    if (dist < RADIUS) {
-      const falloff = 1 - dist / RADIUS;
-      if (falloff > 0.1) {
-        playChime(li, yRatio);
-      }
-    }
+
+  // 最も近いラインのインデックスを求める
+  let closestIdx = Math.round(px / W * (LINE_COUNT - 1));
+  closestIdx = Math.max(0, Math.min(LINE_COUNT - 1, closestIdx));
+
+  // 前回と違うラインに来た時だけ鳴らす
+  if (closestIdx !== lastTriggeredLineIdx) {
+    playChime(closestIdx, yRatio);
+    lastTriggeredLineIdx = closestIdx;
   }
 }
 
@@ -179,7 +167,8 @@ let lastMX = 0, lastMY = 0, isMouseDown = false;
 canvas.addEventListener('mousedown', e => {
   isMouseDown = true;
   fingers = [{ x: e.clientX, y: e.clientY }];
-  triggerNearestChimes(e.clientX, e.clientY);
+  lastTriggeredLineIdx = -1;
+  checkLinesCrossed(e.clientX, e.clientY);
   applyForce(e.clientX, e.clientY, 8, 0);
   lastMX = e.clientX; lastMY = e.clientY;
 });
@@ -187,23 +176,26 @@ canvas.addEventListener('mousemove', e => {
   if (isMouseDown) {
     fingers = [{ x: e.clientX, y: e.clientY }];
     const sx = e.clientX - lastMX, sy = e.clientY - lastMY;
-    if (Math.abs(sx) > 1 || Math.abs(sy) > 1) {
-      triggerNearestChimes(e.clientX, e.clientY);
-      applyForce(e.clientX, e.clientY, sx, sy);
-    }
+    checkLinesCrossed(e.clientX, e.clientY);
+    applyForce(e.clientX, e.clientY, sx, sy);
   }
   lastMX = e.clientX; lastMY = e.clientY;
 });
-canvas.addEventListener('mouseup', () => { isMouseDown = false; fingers = []; });
+canvas.addEventListener('mouseup', () => {
+  isMouseDown = false; fingers = [];
+  lastTriggeredLineIdx = -1;
+});
 
 // タッチ
 const touchPrev = {};
+const touchLastLine = {};
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
   fingers = Array.from(e.touches).map(t => ({ x: t.clientX, y: t.clientY }));
   for (const t of e.changedTouches) {
     touchPrev[t.identifier] = { x: t.clientX, y: t.clientY };
-    triggerNearestChimes(t.clientX, t.clientY);
+    touchLastLine[t.identifier] = -1;
+    checkLinesCrossed(t.clientX, t.clientY);
     applyForce(t.clientX, t.clientY, 8, 0);
   }
 }, { passive: false });
@@ -215,17 +207,27 @@ canvas.addEventListener('touchmove', e => {
     const prev = touchPrev[t.identifier];
     if (prev) {
       const sx = t.clientX - prev.x, sy = t.clientY - prev.y;
-      if (Math.abs(sx) > 1 || Math.abs(sy) > 1) {
-        triggerNearestChimes(t.clientX, t.clientY);
-        applyForce(t.clientX, t.clientY, sx, sy);
+
+      // 各タッチごとに最寄りラインを追跡
+      const closestIdx = Math.max(0, Math.min(LINE_COUNT - 1,
+        Math.round(t.clientX / W * (LINE_COUNT - 1))
+      ));
+      if (closestIdx !== touchLastLine[t.identifier]) {
+        playChime(closestIdx, t.clientY / H);
+        touchLastLine[t.identifier] = closestIdx;
       }
+
+      applyForce(t.clientX, t.clientY, sx, sy);
       touchPrev[t.identifier] = { x: t.clientX, y: t.clientY };
     }
   }
 }, { passive: false });
 
 canvas.addEventListener('touchend', e => {
-  for (const t of e.changedTouches) delete touchPrev[t.identifier];
+  for (const t of e.changedTouches) {
+    delete touchPrev[t.identifier];
+    delete touchLastLine[t.identifier];
+  }
   fingers = Array.from(e.touches).map(t => ({ x: t.clientX, y: t.clientY }));
 }, { passive: false });
 
