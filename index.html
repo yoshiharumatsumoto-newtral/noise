@@ -164,7 +164,7 @@ function applyTouch(px, py, speedX, speedY) {
       const falloff = (1 - dist / RADIUS) ** 2;
       const dir = dx < 0 ? -1 : 1;
       node.vx += dir * falloff * forceMag;
-      if (j <= 3 && falloff > 0.25 && !triggered) {
+      if (falloff > 0.1 && !triggered) {
         startChime(li, yRatio);
         triggered = true;
       }
