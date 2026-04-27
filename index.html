@@ -98,7 +98,7 @@ function playChime(lineIndex, yRatio) {
   bp.type = 'bandpass'; bp.frequency.value = cutoff; bp.Q.value = Q;
 
   const env = audioCtx.createGain();
-  env.gain.setValueAtTime(0.25, now);
+  env.gain.setValueAtTime(0.20, now);
   env.gain.exponentialRampToValueAtTime(0.001, now + decay);
 
   osc1.connect(g1); g1.connect(bp);
