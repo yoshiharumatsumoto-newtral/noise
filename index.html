@@ -16,15 +16,10 @@
   }
   #start p { font-size: 10px; letter-spacing: 0.4em; color: rgba(255,255,255,0.35); font-family: sans-serif; }
   #back {
-    position: fixed;
-    top: 20px; left: 20px;
-    z-index: 9999;
-    color: rgba(255,255,255,0.30);
-    font-size: 10px;
-    letter-spacing: 0.3em;
-    font-family: Georgia, serif;
-    text-decoration: none;
-    transition: color 0.3s;
+    position: fixed; top: 20px; left: 20px;
+    z-index: 9999; color: rgba(255,255,255,0.30);
+    font-size: 10px; letter-spacing: 0.3em;
+    font-family: Georgia, serif; text-decoration: none;
   }
 </style>
 </head>
@@ -50,12 +45,12 @@ const SEGMENTS = 24;
 const SPRING = 0.04;
 const DAMPING = 0.88;
 const RADIUS = 200;
-const FINGER_R = 12; // 指の壁の半径
+const FINGER_R = 12;
 
 let lines = [];
 let audioCtx = null;
 let started = false;
-let fingers = []; // 現在の指の位置リスト
+let fingers = [];
 
 const CHIME_NOTES = [
   523.25, 659.25, 783.99, 1046.50, 1318.51,
@@ -71,17 +66,12 @@ function initLines() {
     for (let j = 0; j <= SEGMENTS; j++) {
       nodes.push({ x, y: (H / SEGMENTS) * j, ox: x, vx: 0 });
     }
-    lines.push({
-      nodes, baseX: x,
-      chimeGain: null,
-      chimeActive: false,
-      lastTriggered: 0,
-    });
+    lines.push({ nodes, baseX: x, lastTriggered: 0 });
   }
 }
 initLines();
 
-function startChime(lineIndex, yRatio) {
+function playChime(lineIndex, yRatio) {
   if (!audioCtx) return;
   const now = audioCtx.currentTime;
   const line = lines[lineIndex];
@@ -92,8 +82,10 @@ function startChime(lineIndex, yRatio) {
   const noteIdx = Math.floor(ratio * (CHIME_NOTES.length - 1));
   const freq = CHIME_NOTES[noteIdx];
   const decay = 1.8 + (1 - ratio) * 1.5;
+
+  // 縦：フィルター
   const cutoff = 8000 - yRatio * 6000;
-  const resonance = 2.0 + yRatio * 4.0;
+  const Q = 2.0 + yRatio * 4.0;
 
   const osc1 = audioCtx.createOscillator();
   const osc2 = audioCtx.createOscillator();
@@ -108,53 +100,49 @@ function startChime(lineIndex, yRatio) {
 
   const hp = audioCtx.createBiquadFilter();
   hp.type = 'highpass'; hp.frequency.value = 800; hp.Q.value = 0.5;
+
   const bp = audioCtx.createBiquadFilter();
-  bp.type = 'bandpass'; bp.frequency.value = cutoff; bp.Q.value = resonance;
+  bp.type = 'bandpass'; bp.frequency.value = cutoff; bp.Q.value = Q;
 
   const env = audioCtx.createGain();
-  env.gain.setValueAtTime(0.28, now);
+  env.gain.setValueAtTime(0.3, now);
   env.gain.exponentialRampToValueAtTime(0.001, now + decay);
 
   const delay = audioCtx.createDelay(0.5);
   delay.delayTime.value = 0.055;
-  const delayGain = audioCtx.createGain(); delayGain.gain.value = 0.15;
+  const dGain = audioCtx.createGain(); dGain.gain.value = 0.15;
 
   osc1.connect(mix); osc2.connect(g2); g2.connect(mix); osc3.connect(g3); g3.connect(mix);
   mix.connect(hp); hp.connect(bp); bp.connect(env);
   env.connect(audioCtx.destination);
-  env.connect(delay); delay.connect(delayGain); delayGain.connect(audioCtx.destination);
+  env.connect(delay); delay.connect(dGain); dGain.connect(audioCtx.destination);
 
   osc1.start(now); osc1.stop(now + decay + 0.2);
   osc2.start(now); osc2.stop(now + decay * 0.6 + 0.1);
   osc3.start(now); osc3.stop(now + decay * 0.3 + 0.1);
-
-  line.chimeGain = env;
-  line.chimeActive = true;
-  setTimeout(() => { line.chimeActive = false; line.chimeGain = null; }, (decay + 0.3) * 1000);
 }
 
-function syncChimeToDisplacement() {
+// タッチ位置から最寄りのラインを探してチャイムを鳴らす
+function triggerNearestChimes(px, py) {
+  const yRatio = py / H;
   for (let li = 0; li < lines.length; li++) {
-    const line = lines[li];
-    if (!line.chimeActive || !line.chimeGain) continue;
-    let maxDisp = 0;
-    for (const node of line.nodes) maxDisp = Math.max(maxDisp, Math.abs(node.x - node.ox));
-    const dispRatio = Math.min(1, maxDisp / 40);
-    try {
-      line.chimeGain.gain.setTargetAtTime(Math.max(0.001, dispRatio * 0.28), audioCtx.currentTime, 0.3);
-    } catch(e) {}
+    const lineX = lines[li].baseX;
+    const dist = Math.abs(lineX - px);
+    if (dist < RADIUS) {
+      const falloff = 1 - dist / RADIUS;
+      if (falloff > 0.1) {
+        playChime(li, yRatio);
+      }
+    }
   }
 }
 
-function applyTouch(px, py, speedX, speedY) {
+function applyForce(px, py, speedX, speedY) {
   const speed = Math.sqrt(speedX * speedX + speedY * speedY);
   if (speed < 0.5) return;
-  const yRatio = py / H;
   const forceMag = Math.min(speed * 0.3, 4.0);
 
-  for (let li = 0; li < lines.length; li++) {
-    const line = lines[li];
-    let triggered = false;
+  for (const line of lines) {
     for (let j = 1; j <= SEGMENTS; j++) {
       const node = line.nodes[j];
       const dx = node.x - px;
@@ -164,15 +152,10 @@ function applyTouch(px, py, speedX, speedY) {
       const falloff = (1 - dist / RADIUS) ** 2;
       const dir = dx < 0 ? -1 : 1;
       node.vx += dir * falloff * forceMag;
-      if (falloff > 0.1 && !triggered) {
-        startChime(li, yRatio);
-        triggered = true;
-      }
     }
   }
 }
 
-// 指を壁として適用：ノードが指の半径内に入ったら押し出す
 function applyFingerWall() {
   for (const finger of fingers) {
     for (const line of lines) {
@@ -182,11 +165,8 @@ function applyFingerWall() {
         const dy = node.y - finger.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
         if (dist < FINGER_R && dist > 0.001) {
-          // 指の外側に押し出す
           const nx = dx / dist;
-          const push = FINGER_R - dist;
-          node.x += nx * push * 0.3;
-          // 速度も押し出す方向に
+          node.x += nx * (FINGER_R - dist) * 0.3;
           if (node.vx * nx < 0) node.vx *= -0.1;
         }
       }
@@ -195,18 +175,22 @@ function applyFingerWall() {
 }
 
 // マウス
-let lastMX = 0, lastMY = 0;
-let isMouseDown = false;
+let lastMX = 0, lastMY = 0, isMouseDown = false;
 canvas.addEventListener('mousedown', e => {
   isMouseDown = true;
   fingers = [{ x: e.clientX, y: e.clientY }];
-  applyTouch(e.clientX, e.clientY, 8, 0);
+  triggerNearestChimes(e.clientX, e.clientY);
+  applyForce(e.clientX, e.clientY, 8, 0);
   lastMX = e.clientX; lastMY = e.clientY;
 });
 canvas.addEventListener('mousemove', e => {
   if (isMouseDown) {
     fingers = [{ x: e.clientX, y: e.clientY }];
-    applyTouch(e.clientX, e.clientY, e.clientX - lastMX, e.clientY - lastMY);
+    const sx = e.clientX - lastMX, sy = e.clientY - lastMY;
+    if (Math.abs(sx) > 1 || Math.abs(sy) > 1) {
+      triggerNearestChimes(e.clientX, e.clientY);
+      applyForce(e.clientX, e.clientY, sx, sy);
+    }
   }
   lastMX = e.clientX; lastMY = e.clientY;
 });
@@ -219,7 +203,8 @@ canvas.addEventListener('touchstart', e => {
   fingers = Array.from(e.touches).map(t => ({ x: t.clientX, y: t.clientY }));
   for (const t of e.changedTouches) {
     touchPrev[t.identifier] = { x: t.clientX, y: t.clientY };
-    applyTouch(t.clientX, t.clientY, 8, 0);
+    triggerNearestChimes(t.clientX, t.clientY);
+    applyForce(t.clientX, t.clientY, 8, 0);
   }
 }, { passive: false });
 
@@ -229,7 +214,11 @@ canvas.addEventListener('touchmove', e => {
   for (const t of e.changedTouches) {
     const prev = touchPrev[t.identifier];
     if (prev) {
-      applyTouch(t.clientX, t.clientY, t.clientX - prev.x, t.clientY - prev.y);
+      const sx = t.clientX - prev.x, sy = t.clientY - prev.y;
+      if (Math.abs(sx) > 1 || Math.abs(sy) > 1) {
+        triggerNearestChimes(t.clientX, t.clientY);
+        applyForce(t.clientX, t.clientY, sx, sy);
+      }
       touchPrev[t.identifier] = { x: t.clientX, y: t.clientY };
     }
   }
@@ -251,11 +240,7 @@ function update() {
       node.vx -= (node.x - line.nodes[j - 1].x) * 0.015;
     }
   }
-
-  // 指の壁を適用（バネで戻ろうとしても指が壁になる）
   if (fingers.length > 0) applyFingerWall();
-
-  if (audioCtx) syncChimeToDisplacement();
 }
 
 function draw() {
